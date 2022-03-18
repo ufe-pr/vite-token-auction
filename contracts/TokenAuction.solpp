@@ -1,0 +1,140 @@
+// SPDX-License-Identifier: MIT
+pragma soliditypp ^0.8.0;
+
+contract TokenAuction {
+    constructor() {}
+
+    vitetoken constant public VITE_TOKEN = vitetoken("tti_5649544520544f4b454e6e40");
+
+    enum AuctionState { active, completed }
+
+    struct Bid {
+        address bidder;
+        uint totalAmount;
+        uint amountPerToken;
+        uint timestamp;
+        uint tokensPaid;
+        bytes32 auctionId;
+    }
+
+
+
+    struct Auction {
+        string name;
+        address seller;
+        uint reservePrice;
+        uint endTime;
+        uint numTokens;
+        vitetoken tokenIdentifier;
+        AuctionState state;
+    }
+
+    mapping(bytes32 => Auction) private auctions;
+    bytes32[] public auctionKeys;
+    mapping(bytes32 => Bid) private bids;
+    bytes32[] bidKeys;
+
+    mapping(address => bytes32[]) private userToBids;
+    mapping(bytes32 => bytes32[]) private auctionToBids;
+    mapping(address => bytes32[]) private userToAuctions;
+
+    event AuctionCreated(bytes32 indexed _id, vitetoken indexed _tti, address indexed _seller, string _name, uint _reservePrice, uint _endTime, uint _numTokens);
+
+    modifier validateBid(Bid memory bid) {
+        require(bid.totalAmount > bid.amountPerToken, "bid.totalAmount must be greater than bid.amountPerToken");
+        _;
+    }
+
+    modifier beforeTime(uint _time, string memory _error) {
+        require(block.timestamp < _time, _error);
+        _;
+    }
+
+    function createAuction(uint _reservePrice, uint _endTime, string calldata _name) beforeTime(_endTime, "invalid end date") payable public returns(bytes32) {
+        require(msg.token != VITE_TOKEN, "token must not be vite token");
+        require(msg.value > 0, "msg.value must be greater than 0");
+
+        bytes32 id = prevhash();
+        auctions[id] = Auction({
+            name: _name,
+            seller: msg.sender,
+            reservePrice: _reservePrice,
+            endTime: _endTime,
+            numTokens: msg.value,
+            tokenIdentifier: msg.token,
+            state: AuctionState.active
+        });
+        auctionKeys.push(id);
+        userToAuctions[msg.sender].push(id);
+
+        emit AuctionCreated(id, msg.token, msg.sender, _name, _reservePrice, _endTime, msg.value);
+        
+        return id;
+    }
+
+    function getUserAuctions(address _user) external view returns(bytes32[] memory) {
+        uint length = userToAuctions[_user].length;
+        bytes32[] memory _auctions = new bytes32[](length);
+
+        for (uint i=0; i < length; i++) {
+            _auctions[i] = userToAuctions[_user][i];
+        }
+
+        return _auctions;
+    }
+
+    function getAuction(bytes32 _auctionId) external view returns(string memory _name, address _seller, uint _reservePrice, uint _endTime, uint _numTokens, vitetoken _tokenId, AuctionState _state ) {
+        Auction memory auction = auctions[_auctionId];
+        _name = auction.name;
+        _seller = auction.seller;
+        _reservePrice = auction.reservePrice;
+        _endTime = auction.endTime;
+        _numTokens = auction.numTokens;
+        _tokenId = auction.tokenIdentifier;
+        _state = auction.state;
+
+    }
+
+    function getAllAuctions() external view returns(bytes32[] memory) {
+        uint length = auctionKeys.length;
+        bytes32[] memory results = new bytes32[](length);
+        
+        for (uint i=0; i < length; i++) {
+            results[i] = auctionKeys[i];
+        }
+
+        return results;
+    }
+
+    function getAuctionsCount() external view returns(uint _count) {
+        _count = auctionKeys.length;
+    }
+
+    function getOngoingAuctions() external view returns (bytes32[] memory) {
+        return getAuctionsByState(AuctionState.active);
+    }
+
+    function getCompletedAuctions() external view returns (bytes32[] memory) {
+        return getAuctionsByState(AuctionState.completed);
+    }
+
+    function getAuctionsByState(AuctionState state) internal view returns (bytes32[] memory) {
+        uint length = auctionKeys.length;
+        bytes32[] memory intermediate = new bytes32[](length);
+        uint count;
+        for (uint i=0; i < length; i++) {
+            Auction storage auction = auctions[auctionKeys[i]];
+            if (auction.state == state) {
+                intermediate[count++] = auctionKeys[i];
+            }
+        }
+
+        bytes32[] memory result = new bytes32[](count);
+
+        for (uint i=0; i < count; i++) {
+            result[i] = intermediate[i];
+        }
+
+        return result;
+    }
+}
