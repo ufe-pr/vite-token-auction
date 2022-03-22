@@ -1,4 +1,4 @@
-import chai from "chai";
+import chai, { expect } from "chai";
 import config from "./vite.config.json";
 const vite = require("@vite/vuilder");
 const { accountBlock, utils } = require("@vite/vitejs");
@@ -15,7 +15,11 @@ describe("TokenAuction", () => {
   let auction;
   let alice, bob, carol, dave;
 
-  async function issueTokens(account, amount) {
+  async function issueTokens(
+    account,
+    amount,
+    decimals = 10
+  ): Promise<{ tokenId: string }> {
     var api = provider;
 
     const { privateKey, address } = account;
@@ -93,7 +97,7 @@ describe("TokenAuction", () => {
 
     let token = await findOwnerToken();
     if (!token) {
-      await issueToken(amount, 10);
+      await issueToken(amount, decimals);
       token = await findOwnerToken();
     }
 
@@ -105,20 +109,48 @@ describe("TokenAuction", () => {
     provider = vite.newProvider(config.networks.local.http);
     deployer = vite.newAccount(config.networks.local.mnemonic, 0, provider);
     alice = vite.newAccount(config.networks.local.mnemonic, 1, provider);
-    // bob = vite.newAccount(config.networks.local.mnemonic, 2, provider);
+    bob = vite.newAccount(config.networks.local.mnemonic, 2, provider);
     // carol = vite.newAccount(config.networks.local.mnemonic, 3, provider);
     // dave = vite.newAccount(config.networks.local.mnemonic, 4, provider);
 
-    await deployer.sendToken(alice.address, "10000000000000000000000");
-    // await deployer.sendToken(bob.address, "10000000000000000000000");
+    await deployer.sendToken(alice.address, "100000000000000000000000");
+    await deployer.sendToken(bob.address, "100000000000000000000000");
     // await deployer.sendToken(carol.address, "10000000000000000000000");
     // await deployer.sendToken(dave.address, "10000000000000000000000");
 
     await alice.receiveAll();
-    // await bob.receiveAll();
+    await bob.receiveAll();
     // await carol.receiveAll();
     // await dave.receiveAll();
   });
+
+  async function createAuction({
+    endTime = Date.now() + 60 * 60 * 24 * 1,
+    numTokens = 2000000000,
+    reserveUnitPrice = 2000000,
+    auctionName = "test_auction",
+    creator = alice,
+    tokenDecimals = 10,
+  }) {
+    const token = await issueTokens(alice, numTokens, tokenDecimals);
+    console.log("Creating auction:", auctionName);
+    await auction.call(
+      "createAuction",
+      [
+        reserveUnitPrice.toFixed(0),
+        endTime,
+        auctionName,
+        tokenDecimals.toFixed(0),
+      ],
+      {
+        caller: creator,
+        amount: numTokens.toFixed(0),
+        tokenId: token?.tokenId,
+      }
+    );
+    console.log("Auction created");
+    return { reserveUnitPrice, endTime, numTokens, token, auctionName };
+  }
 
   beforeEach(async () => {
     compiledContracts = await vite.compile("TokenAuction.solpp");
@@ -135,7 +167,7 @@ describe("TokenAuction", () => {
     auction.address.should.be.a("string");
   });
 
-  it("should create auction", async () => {
+  xit("should create auction", async () => {
     let endTime = Date.now() + 60 * 60 * 24 * 1;
     const token = await issueTokens(alice, "10000000000000000");
     await auction.call("createAuction", ["2000000", endTime, "test_auction"], {
@@ -169,16 +201,9 @@ describe("TokenAuction", () => {
     should.equal(events[0].returnValues._numTokens, "2000000000");
   });
 
-  it("should get single auction", async () => {
-    let endTime = Date.now() + 60 * 60 * 24 * 1;
-    const unitPrice = "2000000";
-    const numTokens = "2000000000";
-    const token = await issueTokens(alice, numTokens);
-    await auction.call("createAuction", [unitPrice, endTime, "test_auction"], {
-      caller: alice,
-      amount: numTokens,
-      tokenId: token?.tokenId,
-    });
+  xit("should get single auction", async () => {
+    const { reserveUnitPrice, endTime, numTokens, token, auctionName } =
+      await createAuction({});
 
     // check Received event
     const events = await auction.getPastEvents("AuctionCreated", {
@@ -192,13 +217,229 @@ describe("TokenAuction", () => {
     });
     result.should.be.an("array");
     result.should.deep.equal([
-      "test_auction",
+      auctionName,
       alice.address,
-      unitPrice,
+      reserveUnitPrice,
       endTime.toFixed(0),
       numTokens,
       token.tokenId,
       "0",
     ]);
+  });
+
+  xit("should place bid", async () => {
+    await createAuction({});
+    console.log("Well here we are");
+
+    let events = await auction.getPastEvents("AuctionCreated", {
+      fromHeight: 0,
+      toHeight: 0,
+    });
+
+    console.log("Got events");
+
+    const auctionId = events[0].returnValues._id;
+    console.log(auctionId);
+    const unitPrice = 2000000;
+
+    await auction.call("placeBid", [auctionId, unitPrice.toFixed(0)], {
+      caller: alice,
+      amount: (unitPrice * 7).toFixed(0),
+      tokenId: VITE,
+    });
+
+    events = await auction.getPastEvents("BidPlaced", {
+      fromHeight: 0,
+      toHeight: 0,
+    });
+    should.exist(events);
+    events.should.be.an("array");
+    events.should.have.length.greaterThan(0);
+    events[0].should.have.property("returnValues");
+    events[0].returnValues.should.have.property("_id");
+    events[0].returnValues._id.should.be.a("string");
+    events[0].returnValues.should.have.property("_auctionId");
+    events[0].returnValues._auctionId.should.be.a("string");
+    events[0].returnValues.should.have.property("_bidder");
+    events[0].returnValues._bidder.should.be.a("string");
+    events[0].returnValues.should.have.property("_unitPrice");
+    events[0].returnValues._unitPrice.should.equal(unitPrice.toFixed(0));
+    events[0].returnValues.should.have.property("_viteAmount");
+    events[0].returnValues._viteAmount.should.equal((unitPrice * 7).toFixed(0));
+    events[0].returnValues.should.have.property("_timestamp");
+
+    const bids = await auction.query("getBids", [auctionId]);
+    console.log(bids);
+    bids.should.be.an("array");
+    bids.should.have.length(1);
+    bids[0].should.have.length(1);
+  });
+
+  xit("should withdraw bids", async () => {
+    await createAuction({});
+
+    let events = await auction.getPastEvents("AuctionCreated", {
+      fromHeight: 0,
+      toHeight: 0,
+    });
+
+    const auctionId = events[0].returnValues._id;
+    const unitPrice = 2000000;
+    await auction.call("placeBid", [auctionId, unitPrice.toFixed(0)], {
+      caller: bob,
+      amount: (unitPrice * 7).toFixed(0),
+      tokenId: VITE,
+    });
+
+    let bids = await auction.query("getBids", [auctionId]);
+    const bidId = bids[0][0];
+
+    await auction.call("withdrawBid", [auctionId, bidId], {
+      caller: bob,
+    });
+
+    events = await auction.getPastEvents("BidWithdrawn", {
+      fromHeight: 0,
+      toHeight: 0,
+    });
+
+    should.exist(events);
+    events.should.be.an("array");
+    events.should.have.length.greaterThan(0);
+    events[0].should.have.property("returnValues");
+    events[0].returnValues.should.have.property("_id");
+    events[0].returnValues._id.should.be.a("string");
+    events[0].returnValues.should.have.property("_auctionId");
+    events[0].returnValues._auctionId.should.be.a("string");
+    events[0].returnValues.should.have.property("_timestamp");
+
+    bids = await auction.query("getBids", [auctionId]);
+    bids.should.be.an("array");
+    bids[0].should.have.length(0);
+  });
+
+  xit("should sort bids by unit price", async () => {
+    await createAuction({});
+
+    let events = await auction.getPastEvents("AuctionCreated", {
+      fromHeight: 0,
+      toHeight: 0,
+    });
+
+    const auctionId = events[0].returnValues._id;
+
+    const prices = [
+      2 * Math.pow(10, 6),
+      4 * Math.pow(10, 6),
+      3 * Math.pow(10, 6),
+    ];
+    const bidIds = <any>[];
+    for (let unitPrice of prices) {
+      await auction.call("placeBid", [auctionId, unitPrice.toFixed(0)], {
+        caller: bob,
+        amount: (unitPrice * 7).toFixed(0),
+        tokenId: VITE,
+      });
+    }
+    events = await auction.getPastEvents("BidPlaced", {
+      fromHeight: 0,
+      toHeight: 0,
+    });
+
+    events.forEach(({ returnValues: { _id } }) => {
+      bidIds.push(_id);
+    });
+
+    let bids = (await auction.query("getBids", [auctionId]))[0];
+    bids.should.be.an("array");
+    bids.should.have.length(3);
+    const [id1, id2, id3] = bidIds;
+    bids.should.deep.equal([id2, id3, id1]);
+  });
+
+  xit("should prevent interaction on and after end date", async () => {
+    await createAuction({
+      endTime: Number.parseInt((Date.now() / 1000 + 15).toFixed(0)),
+    });
+
+    await vite.utils.sleep(15 * 1000);
+
+    let events = await auction.getPastEvents("AuctionCreated", {
+      fromHeight: 0,
+      toHeight: 0,
+    });
+
+    const auctionId = events[0].returnValues._id;
+    const unitPrice = 2000000;
+
+    await auction
+      .call("placeBid", [auctionId, unitPrice.toFixed(0)], {
+        caller: bob,
+        amount: (unitPrice * 7).toFixed(0),
+        tokenId: VITE,
+      })
+      .should.be.rejectedWith(/revert/);
+  });
+
+  it("should complete auction", async () => {
+    const { token } = await createAuction({
+      endTime: Number.parseInt((Date.now() / 1000 + 40).toFixed(0)),
+      numTokens: 13000,
+      tokenDecimals: 3,
+      reserveUnitPrice: 2000000,
+    });
+
+    let events = await auction.getPastEvents("AuctionCreated", {
+      fromHeight: 0,
+      toHeight: 0,
+    });
+
+    const auctionId = events[0].returnValues._id;
+
+    const prices = [2, 4, 3];
+
+    for (let unitPrice of prices) {
+      await auction.call("placeBid", [auctionId, unitPrice.toFixed(0)], {
+        caller: bob,
+        amount: (unitPrice * 7 * Math.pow(10, 18)).toFixed(0),
+        tokenId: VITE,
+      });
+    }
+    const bobBalance = Number.parseInt(await bob.balance());
+    await vite.utils.sleep(30 * 1000);
+
+    await auction.call("completeAuction", [auctionId], {
+      caller: alice,
+    });
+
+    await bob.receiveAll();
+
+    console.log(await bob.balance());
+    console.log(await bob.balance(token.tokenId));
+
+    const newViteBalance = await bob.balance();
+    Number.parseInt(newViteBalance).should.equal(
+      2 * Math.pow(10, 18) * 7 + 3 * Math.pow(10, 18) + bobBalance
+    );
+    await bob.balance(token.tokenId).should.eventually.equal("13000");
+
+    events = await auction.getPastEvents("AuctionCompleted", {
+      fromHeight: 0,
+      toHeight: 0,
+    });
+
+    should.exist(events);
+    events.should.be.an("array");
+    events.should.have.length.greaterThan(0);
+    events[0].should.have.property("returnValues");
+    events[0].returnValues.should.have.property("_auctionId");
+    events[0].returnValues._auctionId.should.be.a("string");
+    events[0].returnValues.should.have.property("_totalTokenAmount");
+    events[0].returnValues._totalTokenAmount.should.be.equal("13000");
+    events[0].returnValues.should.have.property("_totalViteAmount");
+    events[0].returnValues._totalViteAmount.should.be.equal(
+      "46000000000000000000"
+    );
+    events[0].returnValues.should.have.property("_timestamp");
   });
 });
