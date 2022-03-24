@@ -56,10 +56,12 @@ contract TokenAuction {
         uint256 _timestamp
     );
 
-    // modifier validateBid(Bid memory bid) {
-    //     require(bid.totalAmount > bid.amountPerToken, "bid.totalAmount must be greater than bid.amountPerToken");
-    //     _;
-    // }
+    event AuctionCompleted(
+        bytes32 _auctionId,
+        uint256 _totalTokenAmount,
+        uint256 _totalViteAmount,
+        uint256 _timestamp
+    );
 
     modifier beforeTime(uint256 _time, string memory _error) {
         require(block.timestamp < _time, _error);
@@ -213,8 +215,9 @@ contract TokenAuction {
         payable
         onlyWhileOpen(_auctionId)
     {
-        require(msg.value > 0, "msg.value must be greater than 0");
         require(msg.token == VITE_TOKEN, "token must be vite token");
+        require(_unitPrice > 0, "msg.value must be greater than 0");
+        require(msg.value >= _unitPrice, "msg.value must be greater than or equal to _unitPrice");
         BidLibrary.BidList storage bidList = auctionToBids[_auctionId];
         bytes32 id = bidList.addBid(
             BidLibrary.Bid({
@@ -261,12 +264,24 @@ contract TokenAuction {
         return bidList.getBids();
     }
 
-    event AuctionCompleted(
-        bytes32 _auctionId,
-        uint256 _totalTokenAmount,
-        uint256 _totalViteAmount,
-        uint256 _timestamp
-    );
+    function getBid(bytes32 _auctionId, bytes32 _bidId)
+        external
+        view
+        returns (
+            address _bidder,
+            uint256 _totalAmount,
+            uint256 _unitPrice,
+            uint256 _timestamp,
+            uint256 _tokensPaid
+        )
+    {
+        BidLibrary.Bid memory bid = auctionToBids[_auctionId].getBid(_bidId);
+        _bidder = bid.bidder;
+        _totalAmount = bid.totalAmount;
+        _unitPrice = bid.unitPrice;
+        _timestamp = bid.timestamp;
+        _tokensPaid = bid.tokensPaid;
+    }
 
     function min(uint256 _a, uint256 _b) internal pure returns (uint256) {
         if (_a < _b) {
